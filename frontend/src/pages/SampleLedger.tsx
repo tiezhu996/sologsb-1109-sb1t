@@ -62,12 +62,13 @@ export default function SampleLedger() {
     const batch = batches.find((b) => b.id === batchId);
     if (!batch) return '未知批次';
     const herb = herbs.find((h) => h.id === batch.herbId);
-    return `${batch.batchNo} · ${herb?.name ?? '未知药材'} · 得率 ${batch.yieldRate}%`;
+    const yieldText = typeof batch.yieldRate === 'number' ? `得率 ${batch.yieldRate}%` : '得率待判定';
+    return `${batch.batchNo} · ${herb?.name ?? '未知药材'} · ${yieldText}`;
   };
 
   const openCreate = () => {
     const nextIndex = samples.length + 1;
-    const batch = batches[0];
+    const batch = batches.find((b) => b.finalized) ?? batches[0];
     form.resetFields();
     form.setFieldsValue({
       sampleNo: `LY-${batch?.batchNo ?? 'NEW'}-${String(nextIndex).padStart(2, '0')}`,
@@ -221,7 +222,11 @@ export default function SampleLedger() {
             <Input maxLength={32} />
           </Form.Item>
           <Form.Item name="batchId" label="关联炮制批次" rules={[{ required: true, message: '请选择关联批次' }]}>
-            <Select showSearch optionFilterProp="label" options={batches.map((b) => ({ label: batchLabel(b.id), value: b.id }))} />
+            <Select
+              showSearch
+              optionFilterProp="label"
+              options={batches.map((b) => ({ label: `${batchLabel(b.id)}${b.finalized ? '' : '（生产中）'}`, value: b.id }))}
+            />
           </Form.Item>
           <Space size={12} style={{ display: 'flex' }} align="start">
             <Form.Item name="amountG" label="留样量(g)" rules={[{ required: true, message: '请输入留样量' }]}>

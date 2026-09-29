@@ -38,51 +38,176 @@ function isoMinutesAgo(minutes: number): string {
   return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
-function buildSeedBatches(): ProcessBatch[] {
-  const plan: Array<[string, string, string, number, number, number, string, string, string]> = [
-    // batchNo, herbId, methodId, feedKg, auxUsedKg, durationMin, fireLevel, operator, remark
-    ['PZ-25081', 'herb-001', 'method-002', 120, 12, 10, '中火', '陈玉兰', '麸炒白术'],
-    ['PZ-25082', 'herb-002', 'method-003', 80, 8, 15, '文火', '陈玉兰', '酒炙白芍'],
-    ['PZ-25083', 'herb-003', 'method-003', 60, 6, 15, '文火', '刘建国', '酒炙当归'],
-    ['PZ-25084', 'herb-004', 'method-001', 45, 0, 12, '文火', '刘建国', '清炒陈皮'],
-    ['PZ-25085', 'herb-005', 'method-006', 200, 50, 16, '中火', '王丽', '蜜炙黄芪'],
-    ['PZ-25086', 'herb-006', 'method-010', 150, 0, 45, '武火', '王丽', '煅牡蛎'],
-    ['PZ-25087', 'herb-008', 'method-005', 90, 1.8, 12, '文火', '陈玉兰', '盐炙杜仲'],
-    ['PZ-25088', 'herb-009', 'method-001', 55, 0, 12, '文火', '刘建国', '清炒桑叶'],
-    ['PZ-25089', 'herb-010', 'method-006', 130, 32.5, 16, '中火', '王丽', '蜜炙甘草'],
-    ['PZ-25090', 'herb-007', 'method-002', 12, 1.2, 10, '中火', '王丽', '麸炒全蝎'],
-  ];
+interface SeedSegmentPlan {
+  /** 本段作业班组 */
+  team: string;
+  /** 本段时长（min） */
+  duration: number;
+  /** 等待接班的下一班组 */
+  nextTeam?: string;
+  /** 接班确认人（不填表示该段待接班） */
+  confirmedBy?: string;
+  /** 交接说明 */
+  handoverNote?: string;
+}
 
-  return plan.map(([batchNo, herbId, methodId, feedKg, auxUsedKg, duration, fireLevel, operator, remark], index) => {
-    const method = SEED_METHODS.find((m) => m.id === methodId)!;
+interface SeedBatchPlan {
+  batchNo: string;
+  herbId: string;
+  methodId: string;
+  feedKg: number;
+  auxUsedKg: number;
+  fireLevel: string;
+  remark: string;
+  /** handover：有待接班段；ready：全部确认待完工判定；locked：已完工并锁定 */
+  state: 'handover' | 'ready' | 'locked';
+  segments: SeedSegmentPlan[];
+}
+
+const SEED_BATCH_PLANS: SeedBatchPlan[] = [
+  {
+    batchNo: 'PZ-25081', herbId: 'herb-001', methodId: 'method-002', feedKg: 120, auxUsedKg: 12, fireLevel: '中火', remark: '麸炒白术',
+    state: 'handover',
+    segments: [{ team: '甲班', duration: 5, nextTeam: '乙班', handoverNote: '麦麸已下，色泽初转黄，乙班续炒至麸香出锅' }],
+  },
+  {
+    batchNo: 'PZ-25082', herbId: 'herb-002', methodId: 'method-003', feedKg: 80, auxUsedKg: 8, fireLevel: '文火', remark: '酒炙白芍（甲乙班交接）',
+    state: 'ready',
+    segments: [
+      { team: '甲班', duration: 8, nextTeam: '乙班', confirmedBy: '乙班', handoverNote: '黄酒已吸尽，文火焖润中，注意防焦' },
+      { team: '乙班', duration: 7, confirmedBy: '质检员 · 赵敏', handoverNote: '断面棕黄、酒气尽，已出锅待称最终重量' },
+    ],
+  },
+  {
+    batchNo: 'PZ-25083', herbId: 'herb-003', methodId: 'method-003', feedKg: 60, auxUsedKg: 6, fireLevel: '文火', remark: '酒炙当归',
+    state: 'locked',
+    segments: [{ team: '乙班', duration: 15, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25084', herbId: 'herb-004', methodId: 'method-001', feedKg: 45, auxUsedKg: 0, fireLevel: '文火', remark: '清炒陈皮',
+    state: 'locked',
+    segments: [{ team: '丙班', duration: 12, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25085', herbId: 'herb-005', methodId: 'method-006', feedKg: 200, auxUsedKg: 50, fireLevel: '中火', remark: '蜜炙黄芪（甲班拌润、乙班炒至不粘手）',
+    state: 'locked',
+    segments: [
+      { team: '甲班', duration: 8, nextTeam: '乙班', confirmedBy: '乙班', handoverNote: '蜜水拌匀、焖润透，交乙班文火炒至不粘手' },
+      { team: '乙班', duration: 8, confirmedBy: '质检员 · 赵敏', handoverNote: '金黄有光泽、不粘手，出锅' },
+    ],
+  },
+  {
+    batchNo: 'PZ-25086', herbId: 'herb-006', methodId: 'method-010', feedKg: 150, auxUsedKg: 0, fireLevel: '武火', remark: '煅牡蛎',
+    state: 'locked',
+    segments: [{ team: '丙班', duration: 45, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25087', herbId: 'herb-008', methodId: 'method-005', feedKg: 90, auxUsedKg: 1.8, fireLevel: '文火', remark: '盐炙杜仲',
+    state: 'locked',
+    segments: [{ team: '甲班', duration: 12, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25088', herbId: 'herb-009', methodId: 'method-001', feedKg: 55, auxUsedKg: 0, fireLevel: '文火', remark: '清炒桑叶',
+    state: 'locked',
+    segments: [{ team: '乙班', duration: 12, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25089', herbId: 'herb-010', methodId: 'method-006', feedKg: 130, auxUsedKg: 32.5, fireLevel: '中火', remark: '蜜炙甘草',
+    state: 'locked',
+    segments: [{ team: '乙班', duration: 16, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+  {
+    batchNo: 'PZ-25090', herbId: 'herb-007', methodId: 'method-002', feedKg: 12, auxUsedKg: 1.2, fireLevel: '中火', remark: '麸炒全蝎',
+    state: 'locked',
+    segments: [{ team: '丙班', duration: 10, confirmedBy: '质检员 · 赵敏', handoverNote: '单班完成' }],
+  },
+];
+
+function buildSeedBatches(): ProcessBatch[] {
+  return SEED_BATCH_PLANS.map((plan, index) => {
+    const method = SEED_METHODS.find((m) => m.id === plan.methodId)!;
+    const totalMin = plan.segments.reduce((sum, seg) => sum + seg.duration, 0);
     const endedAt = isoMinutesAgo(45 * (index + 1));
-    const startedAt = new Date(new Date(endedAt).getTime() - duration * 60_000).toISOString();
+
+    // 由末段向前倒推每段开始/结束时刻
+    let cursor = new Date(endedAt).getTime();
+    const segments: ProcessBatch['segments'] = plan.segments
+      .map((segPlan, segIndex) => {
+        const segEnd = cursor;
+        const segStart = segEnd - segPlan.duration * 60_000;
+        const confirmed = Boolean(segPlan.confirmedBy);
+        const seg: ProcessBatch['segments'][number] = {
+          id: `seg-${String(index + 1).padStart(3, '0')}-${segIndex + 1}`,
+          seq: segIndex + 1,
+          team: segPlan.team,
+          nextTeam: segPlan.nextTeam,
+          temp: Math.round((method.tempRange[0] + method.tempRange[1]) / 2),
+          durationMin: segPlan.duration,
+          handoverNote: segPlan.handoverNote ?? '',
+          status: confirmed ? '已确认' : '待接班',
+          confirmedBy: segPlan.confirmedBy,
+          confirmedAt: confirmed ? new Date(segEnd).toISOString() : undefined,
+          startedAt: new Date(segStart).toISOString(),
+          endedAt: new Date(segEnd).toISOString(),
+        };
+        cursor = segStart;
+        return seg;
+      })
+      .reverse();
+
+    const startedAt = segments[0].startedAt;
+    const locked = plan.state === 'locked';
+    const finalized = locked;
+    const lastSeg = segments[segments.length - 1];
+
+    if (!locked) {
+      return {
+        id: `batch-${String(index + 1).padStart(3, '0')}`,
+        batchNo: plan.batchNo,
+        herbId: plan.herbId,
+        methodId: plan.methodId,
+        feedKg: plan.feedKg,
+        auxUsedKg: plan.auxUsedKg,
+        fireLevel: plan.fireLevel as ProcessBatch['fireLevel'],
+        startedAt,
+        endedAt: lastSeg.endedAt,
+        segments,
+        finalized: false,
+        locked: false,
+        remark: plan.remark,
+      };
+    }
+
     const yieldRate = Number((expectedYieldOf(method) + ((index % 5) - 2) * 0.8).toFixed(1));
+    const outputKg = Number(((plan.feedKg * yieldRate) / 100).toFixed(1));
     const verdict = judgeDegree({
       method,
-      fireLevel: fireLevel as ProcessBatch['fireLevel'],
-      duration,
-      temp: Math.round((method.tempRange[0] + method.tempRange[1]) / 2),
+      fireLevel: plan.fireLevel as ProcessBatch['fireLevel'],
+      duration: totalMin,
+      temp: lastSeg.temp,
       yieldRate,
     });
-    const locked = index >= 2;
+    const lockedAt = new Date(new Date(endedAt).getTime() + 30 * 60_000).toISOString();
     return {
       id: `batch-${String(index + 1).padStart(3, '0')}`,
-      batchNo,
-      herbId,
-      methodId,
-      feedKg,
-      auxUsedKg,
-      fireLevel: fireLevel as ProcessBatch['fireLevel'],
+      batchNo: plan.batchNo,
+      herbId: plan.herbId,
+      methodId: plan.methodId,
+      feedKg: plan.feedKg,
+      auxUsedKg: plan.auxUsedKg,
+      fireLevel: plan.fireLevel as ProcessBatch['fireLevel'],
       startedAt,
-      endedAt,
+      endedAt: lockedAt,
+      segments,
+      outputKg,
       yieldRate,
       degree: verdict.degree,
-      operator,
-      locked,
-      lockedAt: locked ? new Date(new Date(endedAt).getTime() + 30 * 60_000).toISOString() : undefined,
-      qcBy: locked ? '质检员 · 赵敏' : undefined,
-      remark,
+      finalized: true,
+      finalizedAt: lockedAt,
+      locked: true,
+      lockedAt,
+      qcBy: '质检员 · 赵敏',
+      remark: plan.remark,
     };
   });
 }
@@ -97,7 +222,7 @@ function buildSeedSamples(batches: ProcessBatch[]): RetainSample[] {
     observer,
   });
 
-  return batches.slice(0, 6).map((batch, index) => {
+  return batches.filter((b) => b.finalized).slice(0, 6).map((batch, index) => {
     const retainMonths = [6, 12, 18, 24][index % 4];
     const retainedAt = new Date(Date.now() - (index * 37 + 8) * 86_400_000).toISOString();
     return {
