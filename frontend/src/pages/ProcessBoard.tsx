@@ -9,6 +9,7 @@ import { useMethodStore } from '../stores/methodStore';
 import { useBatchStore } from '../stores/batchStore';
 import { useSampleStore } from '../stores/sampleStore';
 import { dueSamples, formatDate } from '../utils/degree';
+import { allConfirmed, awaitingTeam, totalDuration } from '../utils/segment';
 import type { ProcessBatch } from '../types/process-batch';
 import type { SampleExpiry } from '../types/retain-sample';
 
@@ -24,18 +25,17 @@ export default function ProcessBoard() {
   const pending = useMemo(() => batches.filter((b) => !b.locked), [batches]);
   const due = useMemo(() => dueSamples(samples, 30), [samples]);
   const degreeCount = useMemo(() => {
-    return batches.reduce(
-      (acc, b) => {
-        acc[b.degree] += 1;
-        return acc;
-      },
-      { 不及: 0, 适中: 0, 太过: 0 } as Record<ProcessBatch['degree'], number>,
-    );
+    const counts: Record<'不及' | '适中' | '太过', number> = { 不及: 0, 适中: 0, 太过: 0 };
+    batches.forEach((b) => {
+      if (b.degree) counts[b.degree] += 1;
+    });
+    return counts;
   }, [batches]);
 
   const avgYield = useMemo(() => {
-    if (batches.length === 0) return 0;
-    return Number((batches.reduce((sum, b) => sum + b.yieldRate, 0) / batches.length).toFixed(1));
+    const finalized = batches.filter((b) => b.yieldRate !== undefined);
+    if (finalized.length === 0) return 0;
+    return Number((finalized.reduce((sum, b) => sum + (b.yieldRate ?? 0), 0) / finalized.length).toFixed(1));
   }, [batches]);
 
   const herbName = (id: string) => herbs.find((h) => h.id === id)?.name ?? '未知药材';
@@ -52,7 +52,8 @@ export default function ProcessBoard() {
       dataIndex: 'yieldRate',
       width: 90,
       align: 'right',
-      render: (v: number) => <Text type={v < 85 ? 'danger' : undefined}>{v}</Text>,
+      render: (v: number | undefined) =>
+        v === undefined ? <Text type="secondary">待称量</Text> : <Text type={v < 85 ? 'danger' : undefined}>{v}</Text>,
     },
     {
       title: '火候',
@@ -60,8 +61,23 @@ export default function ProcessBoard() {
       width: 90,
       render: (v: string) => <Tag color={v === '武火' ? 'red' : v === '中火' ? 'orange' : 'green'}>{v}</Tag>,
     },
-    { title: '操作人', dataIndex: 'operator', width: 90 },
-    { title: '开始时间', dataIndex: 'startedAt', width: 150, render: (v: string) => formatDate(v) },
+    {
+      title: '班组 / 交接',
+      width: 150,
+      render: (_, record) => {
+        const waitTeam = awaitingTeam(record);
+        if (waitTeam) {
+          return <Tag color="orange">待接班 · 等{waitTeam}</Tag>;
+        }
+        return (
+          <Space size={4} wrap>
+            <span>{record.segments.map((s) => s.team).join('→')}</span>
+            <Tag>{allConfirmed(record) ? '待完工判定' : `${totalDuration(record)}min`}</Tag>
+          </Space>
+        );
+      },
+    },
+    { title: '开始时间', dataIndex: 'startedAt', width: 110, render: (v: string) => formatDate(v) },
   ];
 
   const dueColumns: TableColumnsType<SampleExpiry> = [
@@ -100,7 +116,7 @@ export default function ProcessBoard() {
 
       <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
         <Col xs={12} md={6}>
-          <StatBadge label="待炮制（未锁定）批次" value={pending.length} unit="批" status="warning" hint="得率与程度判定提交后即锁定" />
+          <StatBadge label="在制（未锁定）批次" value={pending.length} unit="批" status="warning" hint="跨班段全部确认并完成完工判定后才允许锁定" />
         </Col>
         <Col xs={12} md={6}>
           <StatBadge label="在册药材批次" value={herbs.length} unit="批" />
@@ -140,7 +156,7 @@ export default function ProcessBoard() {
       <Row gutter={[16, 16]}>
         <Col xs={24} lg={15}>
           <Card
-            title="待炮制批次"
+            title="在制批次"
             size="small"
             extra={
               <Link to="/batches">

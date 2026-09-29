@@ -50,6 +50,8 @@ export default function SampleLedger() {
   const [observeForm] = Form.useForm<ObserveFormValues>();
 
   const expiryList = useMemo(() => buildExpiryList(samples, 30), [samples]);
+  /** 留样只能取自已完成完工判定（全部段确认）的批次 */
+  const finalizedBatches = useMemo(() => batches.filter((b) => b.degree !== undefined), [batches]);
   const dueList = useMemo(() => expiryList.filter((item) => item.daysLeft <= 30), [expiryList]);
   const expired = useMemo(() => expiryList.filter((item) => item.daysLeft < 0), [expiryList]);
 
@@ -62,12 +64,12 @@ export default function SampleLedger() {
     const batch = batches.find((b) => b.id === batchId);
     if (!batch) return '未知批次';
     const herb = herbs.find((h) => h.id === batch.herbId);
-    return `${batch.batchNo} · ${herb?.name ?? '未知药材'} · 得率 ${batch.yieldRate}%`;
+    return `${batch.batchNo} · ${herb?.name ?? '未知药材'} · 得率 ${batch.yieldRate === undefined ? '待称量' : `${batch.yieldRate}%`}`;
   };
 
   const openCreate = () => {
     const nextIndex = samples.length + 1;
-    const batch = batches[0];
+    const batch = finalizedBatches[0];
     form.resetFields();
     form.setFieldsValue({
       sampleNo: `LY-${batch?.batchNo ?? 'NEW'}-${String(nextIndex).padStart(2, '0')}`,
@@ -220,8 +222,18 @@ export default function SampleLedger() {
           <Form.Item name="sampleNo" label="留样编号" rules={[{ required: true, message: '请输入留样编号' }]}>
             <Input maxLength={32} />
           </Form.Item>
-          <Form.Item name="batchId" label="关联炮制批次" rules={[{ required: true, message: '请选择关联批次' }]}>
-            <Select showSearch optionFilterProp="label" options={batches.map((b) => ({ label: batchLabel(b.id), value: b.id }))} />
+          <Form.Item
+            name="batchId"
+            label="关联炮制批次"
+            rules={[{ required: true, message: '请选择关联批次' }]}
+            extra="仅全部段确认并完成得率、程度判定的批次可留样"
+          >
+            <Select
+              showSearch
+              optionFilterProp="label"
+              notFoundContent="暂无已完成完工判定的批次"
+              options={finalizedBatches.map((b) => ({ label: batchLabel(b.id), value: b.id }))}
+            />
           </Form.Item>
           <Space size={12} style={{ display: 'flex' }} align="start">
             <Form.Item name="amountG" label="留样量(g)" rules={[{ required: true, message: '请输入留样量' }]}>
